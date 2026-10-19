@@ -1,0 +1,179 @@
+--- a/test.py
++++ b/test.py
+@@ -1,12 +1,9 @@
+-
+ import copy
+ import torch
+ import numpy as np
+-from utils import *
+-from tqdm import tqdm
++from utils import load_args, set_seed
+ from flags import parser
+ from scipy.stats import hmean
+-import torch.nn.functional as F
+ import torch.backends.cudnn as cudnn
+ from dataset import CompositionDataset
+ from torch.utils.data.dataloader import DataLoader
+@@ -358,69 +355,6 @@
+         stats["best_hm"] = max_hm
+         return stats
+ 
+-def predict_logits(model, dataset,args):
+-    model.eval()
+-
+-    dataloader = DataLoader(
+-        dataset,
+-        batch_size=args.eval_batch_size,
+-        shuffle=False
+-    )
+-    
+-    obj2idx = dataset.obj2idx
+-    attr2idx = dataset.attr2idx
+-    pairs = torch.tensor([(attr2idx[attr], obj2idx[obj])
+-                          for attr, obj in dataset.pairs])
+-    test_pairs = np.array_split(
+-        pairs, len(pairs) // 64
+-    )
+-    com_prompt_reps = torch.Tensor().cuda()
+-    
+-    # Generate prompt features in batches.
+-    with torch.no_grad():                         
+-        for batch_attr_obj in test_pairs:
+-            token_com,token_att,token_obj = model.csp.construct_token_tensors(batch_attr_obj)
+-            com_prompt_rep,att_prompt_reps,obj_prompt_reps = model.get_text_features(token_com,token_att,token_obj)
+-            com_prompt_reps = torch.cat([com_prompt_reps, com_prompt_rep], dim=0)
+-        all_logits = torch.Tensor()
+-        all_attr_gt, all_obj_gt, all_pair_gt = [], [], []
+-        for idx, data in tqdm(
+-            enumerate(dataloader), total=len(dataloader), desc="Testing"
+-        ):
+-            with torch.no_grad():
+-                data = [d.to('cuda') if not isinstance(d, tuple) else d for d in data]  
+-                img = data[0] 
+-                att,obj,com,glb = model.image_encoder(img)
+-
+-                att_semantic_reps = F.normalize(att, p=2, dim=-1) 
+-                obj_semantic_reps = F.normalize(obj, p=2, dim=-1) 
+-                com_semantic_reps = F.normalize(com, p=2, dim=-1) 
+-                glb_semantic_reps = F.normalize(glb, p=2, dim=-1)
+-                
+-                att_score = model.temp_logit * att_semantic_reps @ att_prompt_reps.T
+-                obj_score = model.temp_logit * obj_semantic_reps @ obj_prompt_reps.T
+-                com_score = model.temp_logit * com_semantic_reps @ com_prompt_reps.T     
+-                glb_score = model.temp_logit * glb_semantic_reps @ com_prompt_reps.T     
+-
+-                att_score = torch.softmax(att_score,dim=-1)[:,dataset.pairs2attr_idx]
+-                obj_score = torch.softmax(obj_score,dim=-1)[:,dataset.pairs2obj_idx]
+-
+-                com =  args.beta * glb_score + (1 - args.beta) * com_score + att_score * obj_score
+-
+-                predictions = {} 
+-                for _, pair in enumerate(dataset.pairs):
+-                    predictions[pair] = com[:, dataset.pair2idx[pair]]
+-                 
+-                attr_truth, obj_truth, pair_truth = data[1], data[2], data[3]
+-                all_logits = torch.cat([all_logits, com.cpu()], dim=0)
+-
+-                all_attr_gt.append(attr_truth)
+-                all_obj_gt.append(obj_truth)
+-                all_pair_gt.append(pair_truth)
+-        
+-        all_logits,all_attr_gt, all_obj_gt, all_pair_gt = all_logits, torch.cat(all_attr_gt), torch.cat(all_obj_gt), torch.cat(all_pair_gt)
+-        return all_logits.cpu(),all_attr_gt.cpu(), all_obj_gt.cpu(), all_pair_gt.cpu()
+-
+ def threshold_with_feasibility(
+         logits,
+         seen_mask,
+@@ -533,66 +467,55 @@
+     return stats
+ 
+ from model.configure_model import configure_model
++from predict_logits_eva import predict_logits_eva
+ 
+ if __name__ == "__main__":
+ 
+     args = parser.parse_args()
++    cli_open_world = args.open_world
+     set_seed(args.seed)
+     if args.config:
+         load_args(args.config, args)
++    if cli_open_world:
++        args.open_world = True
+ 
+     print("----")
+     test_type = 'OPEN WORLD' if args.open_world else 'CLOSED WORLD'
+     print(f"{test_type} evaluation details")
+     print("----")
+     print(f"dataset: {args.dataset}")
+-        
++
+     dataset_path = args.dataset_path
+-
+     test_dataset = CompositionDataset(dataset_path,
+-                                       phase='test',
+-                                       split='compositional-split-natural',
+-                                       open_world=args.open_world)
+-
+-    test_loader = DataLoader(
+-        test_dataset,
+-        batch_size=args.eval_batch_size,
+-        shuffle=False
+-    )
+-    model, optimizer = configure_model(args,test_dataset)
+-    model.to(device)
+-    
++                                      phase='test',
++                                      split='compositional-split-natural',
++                                      open_world=args.open_world)
++
++    model, optimizer = configure_model(args, test_dataset)
++    model.to('cuda' if torch.cuda.is_available() else 'cpu')
++
+     if args.load_model:
+-        model.load_state_dict(torch.load(args.load_model,weights_only=True))
+-
+-    predict_logits_func = predict_logits   
+-    feasibility_path = args.feasibility
++        model.load_state_dict(torch.load(args.load_model, weights_only=False))
++
+     unseen_scores = torch.load(
+-        feasibility_path,
+-        map_location='cpu',weights_only=True)['feasibility']
++        args.feasibility, map_location='cpu', weights_only=False)['feasibility']
++
+     with torch.no_grad():
+         evaluator = Evaluator(test_dataset)
+-        all_logits, all_attr_gt, all_obj_gt, all_pair_gt = predict_logits_func(
+-            model, test_dataset,args)
++        all_logits, all_attr_gt, all_obj_gt, all_pair_gt = predict_logits_eva(
++            model, test_dataset, args)
+         all_logits = threshold_with_feasibility(
+             all_logits,
+             test_dataset.seen_mask,
+             threshold=args.threshold,
+             feasiblity=unseen_scores)
+         test_stats = test(
+-            test_dataset,
+-            evaluator,
+-            all_logits,
+-            all_attr_gt,
+-            all_obj_gt,
+-            all_pair_gt
+-        )
+-
+-        result = ""
+-        for key in test_stats:
+-            result = result + key + "  " + \
+-                str(round(test_stats[key], 4)) + "| "
+-        print(result)
+-
++            test_dataset, evaluator,
++            all_logits, all_attr_gt, all_obj_gt, all_pair_gt)
++
++    result = ""
++    key_set = ["best_seen", "best_unseen", "best_hm", "AUC", "attr_acc", "obj_acc"]
++    for key in key_set:
++        result += key + "  " + str(round(test_stats[key], 4)) + "| "
++    print(result)
+     print("done!")
+-    

@@ -1,0 +1,263 @@
+--- a/README.md
++++ b/README.md
+@@ -1,101 +1,190 @@
+-# CAMS: Towards Compositional Zero-Shot Learning via Gated Cross-Attention and Multi-Space Disentanglement
++# EVA: Decoupling Primitive with Experts — Dynamic Feature Alignment for Compositional Zero-Shot Learning
+ 
+-* **Title**: **[CAMS: Towards Compositional Zero-Shot Learning via Gated Cross-Attention and Multi-Space Disentanglement](https://arxiv.org/pdf/2511.16378)**
+-* **Authors**: **Pan Yang**, **Cheng Deng**, **Jing Yang**, **Han Zhao**, **Yun Liu**, **Yuling Chen**, **Xiaoli Ruan**, **Yanping Chen**
+-* **Institutes**: Guizhou University, Shanghai Jiao Tong University, Nankai University
++> **论文**: *Decoupling Primitive with Experts: Dynamic Feature Alignment for Compositional Zero-Shot Learning* (ICLR 2026)  
++> **Backbone**: CLIP ViT-L/14（冻结）  
++> **环境**: troika conda 环境，PyTorch + CUDA
+ 
+-## Overview
+-<p align="center">
+-  <img src="https://github.com/ybyangjing/CAMS/blob/main/img/framework.png">
+-</p>
++---
+ 
+-Compositional zero-shot learning (CZSL) aims to recognize unseen attribute–object compositions from seen ones, but CLIP-based methods often suffer from limited disentanglement due to the restricted capacity of global representations. We propose CAMS, a semantic disentangled framework that leverages high-level semantic features, employs Gated Cross-Attention to adaptively extract fine-grained visual features, and applies Multi-Space Disentanglement to align semantic features with prompts, improving generalization to unseen compositions. Evaluated on MIT-States, UT-Zappos, and C-GQA, CAMS achieves state-of-the-art performance, boosting HM by up to **+9.3%** and AUC by **+12.4%** in both closed-world and open-world settings.
++## 方法概述
+ 
+-## Environment 
+-The model code is implemented based on the PyTorch framework. The experimental environment includes:
++传统 CZSL 方法对每个 primitive（state / object）只学一个 prototype，但同一个 primitive 在不同 composition 下语义差异巨大（如 *young dog* vs *young city*）。EVA 提出两个核心模块：
+ 
+-- Ubuntu20.04
+-- Intel(R) Core(TM) i9-12900K CPU
+-- 128GB RAM
+-- NVIDIA RTX 6000 GPU
++| 模块 | 描述 |
++|------|------|
++| **Domain-Expert Adaption (MoE Adapter)** | 在 CLIP 每一层 Transformer Block 内部并联 MoE Adapter（1 个 shared expert + 8 个 routed experts，TopK=2），同时作用于 vision encoder（24 层）和 text encoder（12 层） |
++| **Semantic Variant Alignment (SVA)** | 用最后一层每个 expert 对 CLS 的独立输出构造变体集 {v_i}，通过 inter/intra-model affinity 动态选最相关变体作为 primitive 视觉特征 |
+ 
+-## Dataset
+-We experiment with three datasets: MIT-States, UT-Zappos, and C-GQA.
+-The three datasets can be downloaded by clicking [here](https://pan.baidu.com/s/1EjuOntesOsOlE26wpu2kAg?pwd=4g4b).
++**训练损失**：
+ 
+-You only need to modify the **config file path** and the corresponding **dataset_path** in ``CAMS\flags.py``.
+-## Results
+-### Main Results
++$$\mathcal{L} = \mathcal{L}_c + \lambda_1(\mathcal{L}_s + \mathcal{L}_o) + \lambda_2(\mathcal{L}^v_s + \mathcal{L}^v_o)$$
+ 
+-The following results show the closed-world and open-world performance of CAMS, compared with state-of-the-art methods using the same backbone (ViT-L/14). Additional experimental results can be found in the paper.
+-<p align="center">
+-  <img src="https://github.com/ybyangjing/CAMS/blob/main/img/main_results.png" alt="main_results">
+-</p>
++**推理打分**（Closed/Open World）：
+ 
+-## Citation
+-If you find this work useful in your research, please cite our paper:
++$$\text{score}(c{=}(s,o)\mid x) = p_c(c\mid x) + \beta\bigl(p_s(s\mid x) + p_o(o\mid x)\bigr)$$
++
++---
++
++## 目录结构
+ 
+ ```
+-@article{yang2025cams,
+-  title={CAMS: Towards Compositional Zero-Shot Learning via Gated Cross-Attention and Multi-Space Disentanglement},
+-  author={Yang, Pan and Deng, Cheng and Yang, Jing and Zhao, Han and Liu, Yun and Chen, Yuling and Ruan, Xiaoli and Chen, Yanping},
+-  journal={arXiv preprint arXiv:2511.16378},
+-  year={2025}
+-}
++EVA2/
++├── clip_modules/
++│   ├── eva_gca.py          # EVA Vision/Text Transformer + CLIP 加载器（核心新增）
++│   ├── clip.py             # CLIP 原始 tokenizer 及加载工具
++│   └── ...
++├── model/
++│   ├── moe_adapter.py      # LoRAExpert / Router / MoEAdapter（核心新增）
++│   ├── eva.py              # EVA 主模型：前向/损失/推理接口（核心新增）
++│   ├── csp.py              # CSP-style soft prompt 构造（复用）
++│   └── configure_model.py  # 模型工厂：支持 EVA / CAMS 切换
++├── configs/
++│   ├── mit-states-eva.yml  # MIT-States EVA 配置
++│   ├── utzappos-eva.yml    # UT-Zappos EVA 配置
++│   ├── cgqa-eva.yml        # C-GQA EVA 配置
++│   └── ...                 # 原 CAMS 配置保留
++├── predict_logits_eva.py   # EVA 推理函数（train.py 自动调用）
++├── train.py                # 训练入口（EVA / CAMS 通用）
++├── test.py                 # 测试入口
++├── dataset.py              # 数据集加载
++└── feasibilities/          # Open-World feasibility 过滤文件
+ ```
+ 
++---
+ 
+-## Acknowledgement
+-Our code references the following project:
+-* [Troika](https://github.com/bighuang624/Troika)
++## 数据集
+ 
+-## Contact
+-**If you have any questions you can contact us : gs.pyang24@gzu.edu.cn or jyang23@gzu.edu.cn**
++数据集路径（服务器上已就绪，无需下载）：
+ 
++| 数据集 | 路径 |
++|--------|------|
++| MIT-States | `/path/to/mit-states` |
++| UT-Zappos  | `/path/to/ut-zap50k` |
++| C-GQA      | `/path/to/cgqa` |
+ 
+-cd CAMS-main
+-CUDA_VISIBLE_DEVICES=3 python train.py \
+-  --config configs/mit-states.yml \
+-  --dataset_path /path/to/mit-states
++CLIP 权重路径：`/path/to/CLIP-main/ViT-L-14.pt`
+ 
+-# 训练 UT-Zappos
+-CUDA_VISIBLE_DEVICES=2 python train.py \
+-  --config configs/utzappos.yml \
+-  --dataset_path /path/to/ut-zap50k
++---
+ 
+-# 训练 C-GQA
+-CUDA_VISIBLE_DEVICES=2 python train.py \d
+-  --config configs/cgqa.yml \
+-  --dataset_path /path/to/cgqa
++## 训练
+ 
+-训练结束时会自动在 test set 上评估，输出指标包括：
++所有超参已写入 config 文件，直接运行即可。
+ 
+-best_seen / best_unseen / best_hm / AUC
++```bash
++cd EVA2
+ 
+-如果只想单独跑测试，修改配置文件中的 load_model 字段：
+-yamltest:
+-  load_model: CAMS/weight/val_best.pt  # 改为你的模型路径
++# MIT-States
+ 
++CUDA_VISIBLE_DEVICES=3 python train.py --config configs/mit-states-eva.yml 2>&1 | tee output/eva_mit/train.log
+ 
++# UT-Zappos
++CUDA_VISIBLE_DEVICES=2 python train.py --config configs/utzappos-eva.yml
+ 
+-开放世界（Open-World）设置
++CUDA_VISIBLE_DEVICES=2 python train.py --config configs/utzappos-eva.yml 2>&1 | tee output/eva_utzappos/train.log
+ 
+-# MIT-States 开放世界
+-CUDA_VISIBLE_DEVICES=3 python test.py \
+-  --config configs/mit-states.yml \
+-  --dataset_path /path/to/mit-states \
+-  --open_world
++# C-GQA
++CUDA_VISIBLE_DEVICES=1 python train.py --config configs/cgqa-eva.yml 2>&1 | tee output/eva_cgqa/train.log
++CUDA_VISIBLE_DEVICES=1 python train.py --config configs/cgqa-eva.yml 2>&1 | tee output/eva_cgqa/train.log
++```
+ 
+-# UT-Zappos 开放世界
+-CUDA_VISIBLE_DEVICES=1 python test.py \
+-  --config configs/utzappos.yml \
+-  --dataset_path /path/to/ut-zap50k \
+-  --open_world
++训练结束时自动在 **test set** 上评估，输出：
+ 
++```
++best_seen  xx.xx | best_unseen  xx.xx | best_hm  xx.xx | AUC  xx.xx
++```
+ 
++最优 val 模型保存在 `output/eva_<dataset>/val_best.pt`，最终 epoch 模型保存为 `final_model.pt`。
+ 
+-# C-GQA 开放世界
+-CUDA_VISIBLE_DEVICES=2 python test.py \
+-  --config configs/cgqa.yml \
+-  --dataset_path /path/to/cgqa \
+-  --open_world+---
++
++## 单独测试
++
++修改对应 config 中的 `load_model` 字段后运行：
++
++```bash
++# Closed-World 测试
++CUDA_VISIBLE_DEVICES=0 python test.py --config configs/mit-states-eva.yml
++
++# Open-World 测试（将 config 中 open_world 改为 true，或加命令行参数）
++CUDA_VISIBLE_DEVICES=1 python test.py --config configs/mit-states-eva.yml --open_world
++CUDA_VISIBLE_DEVICES=1 python test.py --config configs/utzappos-eva.yml --open_world
++CUDA_VISIBLE_DEVICES=2 python test.py --config configs/cgqa-eva.yml --open_world
++```
++
++---
++
++## 超参说明
++
++### 模型超参（所有数据集共用）
++
++| 参数 | 值 | 说明 |
++|------|----|------|
++| `n_routed` | 8 | Routed expert 数量 |
++| `k` | 2 | 每个 token 激活的 TopK experts 数 |
++| `lora_r` | 64 | LoRA 隐藏维度 |
++| `alpha` | 0.5 | I2T affinity 中 intra-model 权重 |
++| `lambda_1` | 0.5 | T2I primitive loss 权重 |
++| `lambda_2` | 0.1 | I2T variant loss 权重 |
++
++### 训练超参（各数据集）
++
++| 数据集 | epochs | lr | weight_decay | batch_size |
++|--------|--------|----|--------------|------------|
++| MIT-States | 20 | 1e-4 | 1e-4 | 32 |
++| UT-Zappos  | 20 | 1e-4 | 5e-4 | 64 |
++| C-GQA      | 20 | 1e-4 | 1e-4 | 32 |
++
++### 推理超参
++
++| 参数 | 值 | 说明 |
++|------|----|------|
++| `beta` | 0.5 | 推理分数融合权重：$p_c + \beta(p_s + p_o)$ |
++
++---
++
++## 可训练参数说明
++
++EVA 冻结 CLIP 全部权重，仅训练以下部分：
++
++| 模块 | 参数量 | 说明 |
++|------|--------|------|
++| Vision MoE Adapters | ~24M | 24 层，每层 1 shared + 8 routed experts |
++| Text MoE Adapters   | ~12M | 12 层，每层 1 shared + 8 routed experts |
++| CSP Soft Prompts    | ~3M  | 三套 prompt 的 ctx vectors + primitive embeddings |
++| τ_s, τ_o            | 2    | T2I alignment 可学习温度标量 |
++| **合计**            | **~39M / 467M（8.5%）** | |
++
++---
++
++## Sanity Check（复现参考）
++
++MIT-States **Closed-World** 预期指标（EVA 论文 Table 2）：
++
++| Seen | Unseen | HM | AUC |
++|------|--------|----|-----|
++| 51.2 | 55.0 | 41.0 | 24.0 |
++
++调试参考：
++- 仅加 MoE（去掉 SVA）→ AUC ≈ 23.0
++- 仅 prompt baseline → AUC ≈ 20.2
++- 若 AUC 不升：检查 `state_to_pairs` partner-max 是否用了 `-1` 而非 `-inf`；text encoder 的 MoE 是否加入了 optimizer
++
++---
++
++## 实现要点
++
++1. **MoE 位置**：并联在 FFN 旁（`x = x + FFN(LN2(x)) + MoE(LN2(x))`），而非串联
++2. **Variants 构造**：每个 expert 独立对 CLS 做一次前向，不经过 router 加权；最后一层 vision block 返回 `[B, 9, 768]` variants
++3. **I2T 仅训练阶段**：推理时不使用 variants（需要 GT label 才能选 t_s/t_o）
++4. **无 load-balancing loss**：不加平衡损失，让 MoE 自然学习语义分布
++5. **Prompt 初始化**：沿用 CSP style，"a photo of" 3 个 token 的 embedding 作为可学习前缀
++
++---
++
++## 原 CAMS 方法
++
++原 CAMS 配置和代码保持不变，仍可正常使用：
++
++```bash
++CUDA_VISIBLE_DEVICES=0 python train.py --config configs/mit-states.yml
++```

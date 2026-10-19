@@ -1,0 +1,44 @@
+--- a/model/configure_model.py
++++ b/model/configure_model.py
+@@ -1,22 +1,26 @@
+ import torch
+-from model.cams import CAMS
++from model.eva import EVA
+ 
+-def configure_model(args,dataset):
+-    
+-    cams = CAMS(args,dataset)
+-    keywords = ['csp','norm','tr_','adapter','proj_att','proj_obj','proj_com','temp_logit','cross_attention','latent_units']
+-    
+-    # Freeze the pre-trained CLIP parameters.
+-    for name, param in cams.named_parameters():
++
++def configure_model(args, dataset):
++    model = EVA(args, dataset)
++
++    # Freeze CLIP backbone; only MoE adapters + CSP prompts are trainable
++    for name, param in model.named_parameters():
+         param.requires_grad = False
+-        if any(keyword in name for keyword in keywords):
++    trainable_kw = ['moe', 'csp', 'tau_s', 'tau_o']
++    for name, param in model.named_parameters():
++        if any(kw in name for kw in trainable_kw):
+             param.requires_grad = True
+-    
++
++    trainable_params = [p for p in model.parameters() if p.requires_grad]
++    n_trainable = sum(p.numel() for p in trainable_params)
++    n_total     = sum(p.numel() for p in model.parameters())
++    print(f"[EVA] Trainable: {n_trainable/1e6:.1f}M / {n_total/1e6:.1f}M params")
++
+     optimizer = torch.optim.Adam(
+-        cams.parameters(),
++        trainable_params,
+         lr=args.lr,
+-        weight_decay=args.weight_decay
++        weight_decay=args.weight_decay,
+     )
+-
+-    return cams, optimizer
+-
++    return model, optimizer

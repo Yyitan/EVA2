@@ -1,0 +1,18 @@
+--- a/clip_modules/clip.py
++++ b/clip_modules/clip.py
+@@ -5,7 +5,6 @@
+ import warnings
+ from tqdm import tqdm
+ from typing import Union
+-from clip_modules.model import build_model
+ from clip_modules.simple_tokenizer import SimpleTokenizer as _Tokenizer
+ 
+ 
+@@ -76,6 +75,7 @@
+         The CLIP model
+     """
+ 
++    from clip_modules.model import build_model  # lazy: only needed if using load_clip
+     jit = False
+     if name in _MODELS:
+         model_path = _download(_MODELS[name])
